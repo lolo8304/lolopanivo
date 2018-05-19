@@ -1,0 +1,2 @@
+# lolopanivo
+detecting football cards

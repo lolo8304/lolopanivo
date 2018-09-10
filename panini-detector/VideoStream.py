@@ -20,16 +20,24 @@
 # Import the necessary packages
 from threading import Thread
 import cv2
-
+import time
 
 class VideoStream:
     """Camera object"""
     def __init__(self, resolution=(640,480),framerate=30,PiOrUSB=1,src=0):
 
+        self.resolution = resolution
+        self.framerate = framerate
         # Create a variable to indicate if it's a USB camera or PiCamera.
         # PiOrUSB = 1 will use PiCamera. PiOrUSB = 2 will use USB camera.
         self.PiOrUSB = PiOrUSB
+        self.src = src
+        self.init()
 
+    def restart(self):
+        self.init()
+
+    def init(self):
         if self.PiOrUSB == 1: # PiCamera
             # Import packages from picamera library
             from picamera.array import PiRGBArray
@@ -37,9 +45,9 @@ class VideoStream:
 
             # Initialize the PiCamera and the camera image stream
             self.camera = PiCamera()
-            self.camera.resolution = resolution
-            self.camera.framerate = framerate
-            self.rawCapture = PiRGBArray(self.camera,size=resolution)
+            self.camera.resolution = self.resolution
+            self.camera.framerate = self.framerate
+            self.rawCapture = PiRGBArray(self.camera,size=self.resolution)
             self.stream = self.camera.capture_continuous(
                 self.rawCapture, format = "bgr", use_video_port = True)
 
@@ -48,15 +56,15 @@ class VideoStream:
 
         if self.PiOrUSB == 2: # USB camera
             # Initialize the USB camera and the camera image stream
-            self.stream = cv2.VideoCapture(src)
-            ret = self.stream.set(3,resolution[0])
-            ret = self.stream.set(4,resolution[1])
-            #ret = self.stream.set(5,framerate) #Doesn't seem to do anything so it's commented out
+            self.stream = cv2.VideoCapture(self.src)
+            ret = self.stream.set(3,self.resolution[0])
+            ret = self.stream.set(4,self.resolution[1])
+            ret = self.stream.set(5,self.framerate) #Doesn't seem to do anything so it's commented out
 
             # Read first frame from the stream
             (self.grabbed, self.frame) = self.stream.read()
 
-	# Create a variable to control when the camera is stopped
+	    # Create a variable to control when the camera is stopped
         self.stopped = False
 
     def start(self):
@@ -92,7 +100,14 @@ class VideoStream:
                     return
 
                 # Otherwise, grab the next frame from the stream
-                (self.grabbed, self.frame) = self.stream.read()
+                (self.grabbed, frame) = self.stream.read()
+                if (self.grabbed):
+                    self.frame = frame
+                else:
+                    self.stop()
+                    self.stream.release()
+                    self.restart()
+                time.sleep(1/self.framerate/2)
 
     def read(self):
 		# Return the most recent frame

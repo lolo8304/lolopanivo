@@ -59,8 +59,12 @@ class Query_card:
         self.box = [] # box rectangle of card
         self.center = [] # Center point of card
         self.warp = [] # 200x300, flattened, grayed, blurred image
+        self.warpTop = [] # 200x300, flattened, grayed, blurred image, top, rotated
         self.number_img = [] # Thresholded, sized image of corner image to detect number
         self.best_number_match = "Unknown" # Best matched number
+        self.matchFound = False # True, if match found
+        self.match = [] # match card reference
+        
 
 class Train_Card:
     """Structure to store information about trained oriented images."""
@@ -70,6 +74,8 @@ class Train_Card:
         self.image_threshold = [] # Thresholded, sized rank image loaded from hard drive
         self.name = "Placeholder"
         self.portrait = True
+        self.rotateMatrix = []
+        self.rotateAngle = 0
 
 ### Functions ###
 def load_compare_cards():
@@ -78,8 +84,8 @@ def load_compare_cards():
 
     train_ranks = []
     i = 0
-    for Rank in [   "top", "right", "down", "left",
-                    "landscape-right", "landscape-down", "landscape-left", "landscape-top"]:
+    for (Rank, Rotate) in [   ("top", 0), ("right", 270), ("down", 180), ("left", 90),
+                    ("landscape-right", 0), ("landscape-down", 270), ("landscape-left", 180), ("landscape-top", 90)]:
         train_ranks.append(Train_Card())
         train_ranks[i].name = Rank
         image = load_image_bw(path, "/test/diff/{}.jpg".format(Rank))
@@ -94,6 +100,9 @@ def load_compare_cards():
         (thresh, image_threshold) = cv2.threshold(image_norm, THRESHOLD_MIN, 255, cv2.THRESH_BINARY)
         train_ranks[i].image_threshold = image_threshold
         train_ranks[i].portrait = (Rank.startswith("landscape") == False)
+        center = (image_norm.shape[1] / 2, image_norm.shape[0] / 2)
+        train_ranks[i].rotateMatrix = cv2.getRotationMatrix2D(center, Rotate, 1.0)
+        train_ranks[i].rotateAngle = Rotate
         i = i + 1
 
     return train_ranks
@@ -204,7 +213,7 @@ def find_cards(thresh_image, train_cards, image):
         box = np.int0(box)
 
         if ((hier_sort[i][3] == -1) and (len(approx) == 4)):
-            cv2.drawContours(image,[box],-1,(255,0,0),3)
+            ##cv2.drawContours(image,[box],-1,(255,0,0),3)
             ##print ("** size={}".format(size))
             if ((size < CARD_MAX_AREA) and (size > CARD_MIN_AREA)):
                 cnt_is_card[i] = 1
@@ -223,14 +232,14 @@ def find_cards(thresh_image, train_cards, image):
                 qCard.box = box
                 ##print ("box {} - {}", k, box)
 
-                cards.append(preprocess_card(qCard, train_cards, image))
-
-                # Find the best rank and suit match for the card.
-                ##cards[k].best_rank_match,cards[k].best_suit_match,cards[k].rank_diff,cards[k].suit_diff = Cards.match_card(cards[k],train_ranks,train_suits)
-
-                # Draw center point and match result on the image.
-                image = draw_results(image, qCard)
-                k = k + 1
+                preprocess_card(qCard, train_cards, image)
+                if (qCard.matchFound):
+                    cards.append(qCard)
+                    # Find the best rank and suit match for the card.
+                    ##cards[k].best_rank_match,cards[k].best_suit_match,cards[k].rank_diff,cards[k].suit_diff = Cards.match_card(cards[k],train_ranks,train_suits)
+                    # Draw center point and match result on the image.
+                    image = draw_results(image, qCard)
+                    k = k + 1
 
     return cards
 
@@ -240,7 +249,7 @@ def match_card_orientation(qCard, train_cards, image):
     (thresh, test_image_binary) = cv2.threshold(qCard.warp, THRESHOLD_MIN, 255, cv2.THRESH_BINARY)
     portrait = test_w < test_h
 
-    best_match = 0.0
+    best_match = 0.4
     best_match_index = -1
 
     for i in range(len(train_cards)):
@@ -255,9 +264,24 @@ def match_card_orientation(qCard, train_cards, image):
                 best_match = score
                 best_match_index = i
                 ##show_thumb("diff-{}".format(i), diff, 2, 0)
-                print("image {}-{} SSIM: {}".format(i, train_cards[i].name, score))
-                ##qCard.match = train_cards[i]
+                ##print("image {}-{} SSIM: {}".format(i, train_cards[i].name, score))
+                qCard.match = train_cards[i]
                 qCard.best_number_match = train_cards[i].name
+                qCard.matchFound = True
+                if (qCard.match.rotateAngle == 0):
+                    qCard.warpTop = qCard.warp
+                if (qCard.match.rotateAngle == 180):
+                    qCard.warpTop = cv2.warpAffine(qCard.warp, qCard.match.rotateMatrix, 
+                        (compareImage_binary.shape[1], compareImage_binary.shape[0]))
+                if (qCard.match.rotateAngle == 90):
+                    qCard.warpTop = cv2.warpAffine(qCard.warp, qCard.match.rotateMatrix, 
+                        (compareImage_binary.shape[0], compareImage_binary.shape[1]))
+                if (qCard.match.rotateAngle == 270):
+                    qCard.warpTop = cv2.warpAffine(qCard.warp, qCard.match.rotateMatrix, 
+                        (compareImage_binary.shape[0], compareImage_binary.shape[1]))
+                save_image("/images/pos/warp-{}.jpg".format(qCard.index), qCard.warp)
+                save_image("/images/pos/warp-top-{}.jpg".format(qCard.index), qCard.warpTop)
+
     return qCard
 
 
@@ -338,8 +362,8 @@ def draw_results(image, qCard):
     number_name = qCard.best_number_match
 
     # Draw card name twice, so letters have black outline
-    cv2.putText(image,(number_name+' of'),(x-60,y-10),font,1,(0,0,0),3,cv2.LINE_AA)
-    cv2.putText(image,(number_name+' of'),(x-60,y-10),font,1,(50,200,200),2,cv2.LINE_AA)
+    cv2.putText(image,(number_name+' of'),(x-60,y-10),font,2,(0,0,0),3,cv2.LINE_AA)
+    cv2.putText(image,(number_name+' of'),(x-60,y-10),font,2,(50,200,200),2,cv2.LINE_AA)
 
     # Can draw difference value for troubleshooting purposes
     # (commented out during normal operation)
